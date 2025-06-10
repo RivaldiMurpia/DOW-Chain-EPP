@@ -1,12 +1,12 @@
 // File: index.js
-// [PERBAIKAN FINAL] Mengubah cara simulasi dimulai. Server sekarang menjadi
-// sumber kebenaran parameter, dan hanya menerima perubahan dari frontend.
+// [UPDATE KEAMANAN] Menambahkan rate limiting untuk melindungi server dari serangan DoS.
 
 const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
 const path = require('path');
-const _ = require('lodash'); // Kita butuh lodash untuk deep merging
+const _ = require('lodash');
+const rateLimit = require('express-rate-limit'); // [BARU] Impor library rate limit
 
 const { simulationParams } = require('./config/simulationParams.js');
 const Simulation = require('./src/simulation');
@@ -16,6 +16,19 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 const PORT = 3000;
+
+// [BARU] Konfigurasi Rate Limiter
+// Ini akan membatasi setiap IP untuk membuat 100 request per 15 menit.
+const limiter = rateLimit({
+	windowMs: 15 * 60 * 1000, // 15 menit
+	max: 100, // Batas setiap IP untuk 100 request per windowMs
+	standardHeaders: true, // Kirim header RateLimit-* ke response
+	legacyHeaders: false, // Nonaktifkan header X-RateLimit-* yang lama
+    message: 'Too many requests from this IP, please try again after 15 minutes', // Pesan error jika limit terlampaui
+});
+
+// [BARU] Terapkan rate limiter ke semua request
+app.use(limiter);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
@@ -27,7 +40,7 @@ function main() {
     logger.init(io);
 
     logger.info("========================================================");
-    logger.info("🚀 DOW Chain EPP Server [v7.0 Final Fix] Siap 🚀");
+    logger.info("🚀 DOW Chain EPP Server [v7.1 Security Hardened] Siap 🚀");
     logger.info(`Buka browser dan kunjungi http://localhost:${PORT}`);
     logger.info("========================================================");
 
@@ -36,7 +49,6 @@ function main() {
         
         socket.on('request-initial-params', () => {
             logger.info(`[${socket.id}] Mengirim parameter awal.`);
-            // Selalu kirim parameter default yang bersih ke frontend saat pertama kali connect
             socket.emit('initial-params', simulationParams);
         });
 
@@ -45,8 +57,6 @@ function main() {
                 activeSimulations.get(socket.id).stop();
             }
 
-            // [LOGIKA BARU] Buat salinan dari parameter default, lalu timpa dengan perubahan dari frontend.
-            // Ini memastikan semua properti (seperti 'events') selalu ada.
             const finalParams = _.cloneDeep(simulationParams);
             _.merge(finalParams, paramsFromFrontend);
             
